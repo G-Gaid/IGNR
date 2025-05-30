@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="improved_robot">
+    <xacro:arg name="initial_positions_file" default="initial_positions.yaml" />
+
+    <!-- Import improved_robot urdf file -->
+    <xacro:include filename="$(find my_jointed_robot)/urdf/ImprovedJointedRobot.urdf" />
+
+    <!-- Import control_xacro -->
+    <xacro:include filename="improved_robot.ros2_control.xacro" />
+
+
+    <xacro:improved_robot_ros2_control name="FakeSystem" initial_positions_file="$(arg initial_positions_file)"/>
+
+</robot>

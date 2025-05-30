@@ -1,0 +1,7 @@
+# Default initial positions for improved_robot's ros2_control fake system
+
+initial_positions:
+  arm1_to_pivot2: 0
+  base_link_to_rotator1: 0
+  pivot1_to_arm1: 0
+  pivot2_to_arm2: 0

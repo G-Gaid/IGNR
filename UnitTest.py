@@ -1,5 +1,3 @@
-# test_sanity_PathPlanning_copy.py
-
 import unittest
 import vtk
 import numpy as np

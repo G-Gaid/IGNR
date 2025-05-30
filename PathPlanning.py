@@ -1,385 +1,483 @@
 import logging
 import os
-from typing import Annotated, Optional
+import time
+from typing import Annotated, List, Tuple
 import vtk
-import slicer
-from slicer.i18n import tr as _
-from slicer.i18n import translate
-from slicer.ScriptedLoadableModule import *
-from slicer.util import VTKObservationMixin
-from slicer.parameterNodeWrapper import (parameterNodeWrapper, WithinRange)
-from slicer import vtkMRMLScalarVolumeNode
+import numpy as np
 import SimpleITK as sitk
 import sitkUtils
-import numpy as np
-
+import slicer
+import qt
+import ctk
+from slicer.util import VTKObservationMixin
+from slicer.i18n import tr as _
+from slicer.i18n import translate
+from slicer.ScriptedLoadableModule import (
+    ScriptedLoadableModule,
+    ScriptedLoadableModuleWidget,
+    ScriptedLoadableModuleLogic,
+    ScriptedLoadableModuleTest,
+)
+from slicer.parameterNodeWrapper import parameterNodeWrapper, WithinRange
+from slicer import vtkMRMLScalarVolumeNode, vtkMRMLMarkupsFiducialNode
 
 #
-# PathPlanning
+# Module declaration
 #
 
-
-class PathPlanning(ScriptedLoadableModule):
-    """Uses ScriptedLoadableModule base class, available at:
-    https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
-    """
-
+class PathPlanning_copy(ScriptedLoadableModule):
+    """IGNR PathPlanning_copy module."""
     def __init__(self, parent):
-        ScriptedLoadableModule.__init__(self, parent)
-        self.parent.title = "Path Planning" 
-        self.parent.categories = ["IGNR"] # Extension name
-        self.parent.dependencies = [] 
-        self.parent.contributors = ["George Gaid (King's College London)"] 
+        super().__init__(parent)
+        self.parent.title = _("PathPlanning_copy")
+        self.parent.categories = [translate("qSlicerAbstractCoreModule", "IGNR")]
+        self.parent.dependencies = []
+        self.parent.contributors = ["George Gaid (King's College London)"]
         self.parent.helpText = _("""
-This module implements Path Planning algorithms for the IGNR (Image-Guided Navigation for Robotics) project.
-It allows users to define entry/target points, critical structures, and target structures
-to compute and visualize safe and optimal trajectories.
+This module implements Path Planning for the IGNR Final project.
+It allows users to define entry/target points and critical/target volumes,
+to thereby compute the optimal trajectories.
 """)
+
         self.parent.acknowledgementText = _("""
 This file was originally developed by Jean-Christophe Fillion-Robin, Kitware Inc., Andras Lasso, PerkLab,
-and Steve Pieper, Isomics, Inc. and was partially funded by NIH grant 3P41RR013218-12S1. Contributions were made
-by George Gaid and Rachel Sparks, King's College London.
+and Steve Pieper, Isomics, Inc. and was partially funded by NIH grant 3P41RR013218-12S1.  Rachel Sparks has modified this, 
+for part of Image-guide Navigation for Robotics taught through King's College London.
 """)
-
-        # Additional initialization step after application startup is complete
-        slicer.app.connect("startupCompleted()", registerSampleData)
-
-
-#
-# Register sample data sets in Sample Data module
-#
 
 
 def registerSampleData():
-    """Add data sets to Sample Data module."""
-    # It is always recommended to provide sample data for users to make it easy to try the module,
-    # but if no sample data is available then this method (and associated startupCompeted signal connection) can be removed.
-
-    import SampleData
-
-    iconsPath = os.path.join(os.path.dirname(__file__), "Resources/Icons")
-
-    # To ensure that the source code repository remains small (can be downloaded and installed quickly)
-    # it is recommended to store data sets that are larger than a few MB in a Github release.
-
-    # PathPlanning1
-    SampleData.SampleDataLogic.registerCustomSampleDataSource(
-        # Category and sample name displayed in Sample Data module
-        category="PathPlanning",
-        sampleName="PathPlanning1",
-        # Thumbnail should have size of approximately 260x280 pixels and stored in Resources/Icons folder.
-        # It can be created by Screen Capture module, "Capture all views" option enabled, "Number of images" set to "Single".
-        thumbnailFileName=os.path.join(iconsPath, "PathPlanning1.png"),
-        # Download URL and target file name
-        uris="https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/998cb522173839c78657f4bc0ea907cea09fd04e44601f17c82ea27927937b95",
-        fileNames="PathPlanning1.nrrd",
-        # Checksum to ensure file integrity. Can be computed by this command:
-        #  import hashlib; print(hashlib.sha256(open(filename, "rb").read()).hexdigest())
-        checksums="SHA256:998cb522173839c78657f4bc0ea907cea09fd04e44601f17c82ea27927937b95",
-        # This node name will be used when the data set is loaded
-        nodeNames="PathPlanning1",
-    )
-
-    # PathPlanning2
-    SampleData.SampleDataLogic.registerCustomSampleDataSource(
-        # Category and sample name displayed in Sample Data module
-        category="PathPlanning",
-        sampleName="PathPlanning2",
-        thumbnailFileName=os.path.join(iconsPath, "PathPlanning2.png"),
-        # Download URL and target file name
-        uris="https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/1a64f3f422eb3d1c9b093d1a18da354b13bcf307907c66317e2463ee530b7a97",
-        fileNames="PathPlanning2.nrrd",
-        checksums="SHA256:1a64f3f422eb3d1c9b093d1a18da354b13bcf307907c66317e2463ee530b7a97",
-        # This node name will be used when the data set is loaded
-        nodeNames="PathPlanning2",
+    """Add sample datasets to the Sample Data module."""
+    from SampleData import SampleDataLogic
+    iconsPath = os.path.join(os.path.dirname(__file__), "Resources", "Icons")
+    SampleDataLogic.registerCustomSampleDataSource(
+        category="PathPlanning_copy",
+        sampleName="ExampleBrain",
+        thumbnailFileName=os.path.join(iconsPath, "ExampleBrain.png"),
+        uris="https://example.com/ExampleBrain.nrrd",
+        fileNames="ExampleBrain.nrrd",
+        checksums="SHA256:...",
+        nodeNames="Example Brain Volume",
     )
 
 
 #
-# PathPlanningParameterNode
+# Parameter node
 #
-
 
 @parameterNodeWrapper
-class PathPlanningParameterNode:
-    """
-    The parameters needed by module.
-
-    inputVolume - The volume to threshold.
-    imageThreshold - The value at which to threshold the input volume.
-    invertThreshold - If true, will invert the threshold.
-    thresholdedVolume - The output volume that will contain the thresholded volume.
-    invertedVolume - The output volume that will contain the inverted thresholded volume.
-    """
-
-    inputVolume: vtkMRMLScalarVolumeNode
-    imageThreshold: Annotated[float, WithinRange(-100, 500)] = 100
-    invertThreshold: bool = False
-    thresholdedVolume: vtkMRMLScalarVolumeNode
-    invertedVolume: vtkMRMLScalarVolumeNode
+class PathPlanning_copyParameterNode:
+    """Holds all user parameters for PathPlanning_copy."""
+    inputEntryFiducials:  vtkMRMLMarkupsFiducialNode
+    inputTargetFiducials: vtkMRMLMarkupsFiducialNode
+    inputTargetVolume:    vtkMRMLScalarVolumeNode
+    inputCriticalVolume:  vtkMRMLScalarVolumeNode
+    lengthThreshold:      Annotated[float, WithinRange(0,1000)] = 150.0
+    outputFiducials:      vtkMRMLMarkupsFiducialNode
 
 
 #
-# PathPlanningWidget
+# Widget
 #
 
+class PathPlanning_copyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
+    """GUI for the PathPlanning_copy module."""
+    def setup(self):
+        super().setup()
 
-class PathPlanningWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
-    """Uses ScriptedLoadableModuleWidget base class, available at:
-    https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
-    """
+        # Parameters section
+        collapsible = ctk.ctkCollapsibleButton()
+        collapsible.text = _("Parameters")
+        self.layout.addWidget(collapsible)
+        formLayout = qt.QFormLayout(collapsible)
 
-    def __init__(self, parent=None) -> None:
-        """Called when the user opens the module the first time and the widget is initialized."""
-        ScriptedLoadableModuleWidget.__init__(self, parent)
-        VTKObservationMixin.__init__(self)  # needed for parameter node observation
-        self.logic = None
+        # Entry points selector
+        self.entrySelector = slicer.qMRMLNodeComboBox()
+        self.entrySelector.nodeTypes = ["vtkMRMLMarkupsFiducialNode"]
+        self.entrySelector.selectNodeUponCreation = True
+        self.entrySelector.noneEnabled = False
+        self.entrySelector.setMRMLScene(slicer.mrmlScene)
+        formLayout.addRow(_("Entry Points:"), self.entrySelector)
+
+        # Target points selector
+        self.targetSelector = slicer.qMRMLNodeComboBox()
+        self.targetSelector.nodeTypes = ["vtkMRMLMarkupsFiducialNode"]
+        self.targetSelector.selectNodeUponCreation = True
+        self.targetSelector.noneEnabled = False
+        self.targetSelector.setMRMLScene(slicer.mrmlScene)
+        formLayout.addRow(_("Target Points:"), self.targetSelector)
+
+        # Target volume selector
+        self.targetVolSelector = slicer.qMRMLNodeComboBox()
+        self.targetVolSelector.nodeTypes = ["vtkMRMLScalarVolumeNode"]
+        self.targetVolSelector.selectNodeUponCreation = True
+        self.targetVolSelector.noneEnabled = False
+        self.targetVolSelector.setMRMLScene(slicer.mrmlScene)
+        formLayout.addRow(_("Target Volume:"), self.targetVolSelector)
+
+        # Critical volume selector
+        self.critVolSelector = slicer.qMRMLNodeComboBox()
+        self.critVolSelector.nodeTypes = ["vtkMRMLScalarVolumeNode"]
+        self.critVolSelector.selectNodeUponCreation = True
+        self.critVolSelector.noneEnabled = False
+        self.critVolSelector.setMRMLScene(slicer.mrmlScene)
+        formLayout.addRow(_("Critical Volume:"), self.critVolSelector)
+
+        # Output trajectory selector
+        self.outputSelector = slicer.qMRMLNodeComboBox()
+        self.outputSelector.nodeTypes = ["vtkMRMLMarkupsFiducialNode"]
+        self.outputSelector.selectNodeUponCreation = True
+        self.outputSelector.noneEnabled = False
+        self.outputSelector.setMRMLScene(slicer.mrmlScene)
+        formLayout.addRow(_("Output Trajectory:"), self.outputSelector)
+
+        # Length threshold
+        self.lengthSlider = qt.QDoubleSpinBox()
+        self.lengthSlider.minimum = 0.0
+        self.lengthSlider.maximum = 1000.0
+        self.lengthSlider.value = 150.0
+        formLayout.addRow(_("Length Threshold (mm):"), self.lengthSlider)
+
+        # Apply button
+        self.applyButton = qt.QPushButton(_("Apply"))
+        self.applyButton.enabled = False
+        formLayout.addWidget(self.applyButton)
+
+        # Connect signals
+        selectors = [
+            self.entrySelector, self.targetSelector,
+            self.targetVolSelector, self.critVolSelector,
+            self.outputSelector
+        ]
+        for sel in selectors:
+            sel.currentNodeChanged.connect(self._checkCanApply)
+        self.applyButton.clicked.connect(self.onApplyButton)
+        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent,   self.onSceneStartClose)
+        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent,     self.onSceneEndClose)
+
+        # Logic + parameter node
+        self.logic = PathPlanning_copyLogic()
+        self.initializeParameterNode()
+
+    def initializeParameterNode(self):
+        """Instantiate parameter node and set defaults."""
+        self._parameterNode = self.logic.getParameterNode()
+        p = self._parameterNode
+        defaults = [
+            (self.entrySelector, "inputEntryFiducials"),
+            (self.targetSelector, "inputTargetFiducials"),
+            (self.targetVolSelector, "inputTargetVolume"),
+            (self.critVolSelector, "inputCriticalVolume"),
+        ]
+        for widget, attr in defaults:
+            if not getattr(p, attr):
+                node = slicer.mrmlScene.GetFirstNodeByClass(widget.nodeTypes[0])
+                if node:
+                    setattr(p, attr, node)
+        if not p.outputFiducials:
+            out = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode")
+            out.SetName("PlannedTrajectories")
+            p.outputFiducials = out
+        self._checkCanApply()
+
+    def _checkCanApply(self, *args):
+        """Enable Apply only when all inputs/outputs set."""
+        p = self._parameterNode
+        ready = all([
+            p and p.inputEntryFiducials and p.inputTargetFiducials,
+            p.inputTargetVolume and p.inputCriticalVolume,
+            p.outputFiducials
+        ])
+        self.applyButton.enabled = ready
+
+    def onApplyButton(self):
+        """Gather parameters and run logic."""
+        p = self._parameterNode
+        self.logic.SetEntryFiducials(p.inputEntryFiducials)
+        self.logic.SetTargetFiducials(p.inputTargetFiducials)
+        self.logic.SetTargetVolume(p.inputTargetVolume)
+        self.logic.SetCriticalVolume(p.inputCriticalVolume)
+        self.logic.SetLengthThreshold(self.lengthSlider.value)
+        self.logic.SetOutputFiducials(p.outputFiducials)
+        startTime = time.time()
+        success = self.logic.Run()
+        elapsed = time.time() - startTime
+        logging.info(f"Path planning completed in {elapsed:.2f}s")
+        if not success:
+            slicer.util.errorDisplay(_("Path planning failed; see log."))
+
+    def onSceneStartClose(self, *args):
+        """Reset parameter node when scene closes."""
         self._parameterNode = None
-        self._parameterNodeGuiTag = None
 
-    def setup(self) -> None:
-        """Called when the user opens the module the first time and the widget is initialized."""
-        ScriptedLoadableModuleWidget.setup(self)
-
-        # Load widget from .ui file (created by Qt Designer).
-        # Additional widgets can be instantiated manually and added to self.layout.
-        uiWidget = slicer.util.loadUI(self.resourcePath("UI/PathPlanning.ui"))
-        self.layout.addWidget(uiWidget)
-        self.ui = slicer.util.childWidgetVariables(uiWidget)
-
-        # Set scene in MRML widgets. Make sure that in Qt designer the top-level qMRMLWidget's
-        # "mrmlSceneChanged(vtkMRMLScene*)" signal in is connected to each MRML widget's.
-        # "setMRMLScene(vtkMRMLScene*)" slot.
-        uiWidget.setMRMLScene(slicer.mrmlScene)
-
-        # Create logic class. Logic implements all computations that should be possible to run
-        # in batch mode, without a graphical user interface.
-        self.logic = PathPlanningLogic()
-
-        # Connections
-
-        # These connections ensure that we update parameter node when scene is closed
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
-
-        # Buttons
-        self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
-
-        # Make sure parameter node is initialized (needed for module reload)
-        self.initializeParameterNode()
-
-    def cleanup(self) -> None:
-        """Called when the application closes and the module widget is destroyed."""
-        self.removeObservers()
-
-    def enter(self) -> None:
-        """Called each time the user opens this module."""
-        # Make sure parameter node exists and observed
-        self.initializeParameterNode()
-
-    def exit(self) -> None:
-        """Called each time the user opens a different module."""
-        # Do not react to parameter node changes (GUI will be updated when the user enters into the module)
-        if self._parameterNode:
-            self._parameterNode.disconnectGui(self._parameterNodeGuiTag)
-            self._parameterNodeGuiTag = None
-            self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
-
-    def onSceneStartClose(self, caller, event) -> None:
-        """Called just before the scene is closed."""
-        # Parameter node will be reset, do not use it anymore
-        self.setParameterNode(None)
-
-    def onSceneEndClose(self, caller, event) -> None:
-        """Called just after the scene is closed."""
-        # If this module is shown while the scene is closed then recreate a new parameter node immediately
+    def onSceneEndClose(self, *args):
+        """Re-initialize when scene opens."""
         if self.parent.isEntered:
             self.initializeParameterNode()
 
-    def initializeParameterNode(self) -> None:
-        """Ensure parameter node exists and observed."""
-        # Parameter node stores all user choices in parameter values, node selections, etc.
-        # so that when the scene is saved and reloaded, these settings are restored.
-
-        self.setParameterNode(self.logic.getParameterNode())
-
-        # Select default input nodes if nothing is selected yet to save a few clicks for the user
-        if not self._parameterNode.inputVolume:
-            firstVolumeNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
-            if firstVolumeNode:
-                self._parameterNode.inputVolume = firstVolumeNode
-
-    def setParameterNode(self, inputParameterNode: Optional[PathPlanningParameterNode]) -> None:
-        """
-        Set and observe parameter node.
-        Observation is needed because when the parameter node is changed then the GUI must be updated immediately.
-        """
-
-        if self._parameterNode:
-            self._parameterNode.disconnectGui(self._parameterNodeGuiTag)
-            self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
-        self._parameterNode = inputParameterNode
-        if self._parameterNode:
-            # Note: in the .ui file, a Qt dynamic property called "SlicerParameterName" is set on each
-            # ui element that needs connection.
-            self._parameterNodeGuiTag = self._parameterNode.connectGui(self.ui)
-            self.addObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
-            self._checkCanApply()
-
-    def _checkCanApply(self, caller=None, event=None) -> None:
-        if self._parameterNode and self._parameterNode.inputVolume and self._parameterNode.thresholdedVolume:
-            self.ui.applyButton.toolTip = _("Compute output volume")
-            self.ui.applyButton.enabled = True
-        else:
-            self.ui.applyButton.toolTip = _("Select input and output volume nodes")
-            self.ui.applyButton.enabled = False
-
-    def onApplyButton(self) -> None:
-        """Run processing when user clicks "Apply" button."""
-        with slicer.util.tryWithErrorDisplay(_("Failed to compute results."), waitCursor=True):
-            # Compute output
-            self.logic.process(self.ui.inputSelector.currentNode(), self.ui.outputSelector.currentNode(),
-                               self.ui.imageThresholdSliderWidget.value, self.ui.invertOutputCheckBox.checked)
-
-            # Compute inverted output (if needed)
-            if self.ui.invertedOutputSelector.currentNode():
-                # If additional output volume is selected then result with inverted threshold is written there
-                self.logic.process(self.ui.inputSelector.currentNode(), self.ui.invertedOutputSelector.currentNode(),
-                                   self.ui.imageThresholdSliderWidget.value, not self.ui.invertOutputCheckBox.checked, showResult=False)
-
 
 #
-# PathPlanningLogic
+# Logic
 #
 
-
-class PathPlanningLogic(ScriptedLoadableModuleLogic):
-    """This class should implement all the actual
-    computation done by your module.  The interface
-    should be such that other python code can import
-    this class and make use of the functionality without
-    requiring an instance of the Widget.
-    Uses ScriptedLoadableModuleLogic base class, available at:
-    https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
-    """
-
-    def __init__(self) -> None:
-        """Called when the logic class is instantiated. Can be used for initializing member variables."""
-        ScriptedLoadableModuleLogic.__init__(self)
+class PathPlanning_copyLogic(ScriptedLoadableModuleLogic):
+    """Core algorithm: enumerate, filter, rank by Danielsson distance."""
+    def __init__(self):
+        super().__init__()
+        self._entryFid = None
+        self._targetFid = None
+        self._targetVol = None
+        self._critVol = None
+        self._lengthThresh = None
+        self._outputFid = None
+        self._distanceVol = None
 
     def getParameterNode(self):
-        return PathPlanningParameterNode(super().getParameterNode())
+        return PathPlanning_copyParameterNode(super().getParameterNode())
 
-    def process(self,
-                inputVolume: vtkMRMLScalarVolumeNode,
-                outputVolume: vtkMRMLScalarVolumeNode,
-                imageLowerThreshold: float,
-                imageUpperThreshold: float,
-                showResult: bool = True) -> None:
-        """
-        Run the processing algorithm.
-        Can be used without GUI widget.
-        :param inputVolume: volume to be thresholded
-        :param outputVolume: thresholding result
-        :param imageThreshold: values above/below this threshold will be set to 0
-        :param invert: if True then values above the threshold will be set to 0, otherwise values below are set to 0
-        :param showResult: show output volume in slice viewers
-        """
+    # Setters
+    def SetEntryFiducials(self, node):
+        self._entryFid = node
 
-        if not inputVolume or not outputVolume:
-            raise ValueError("Input or output volume is invalid")
+    def SetTargetFiducials(self, node):
+        self._targetFid = node
 
-        import time
+    def SetTargetVolume(self, node):
+        self._targetVol = node
 
-        startTime = time.time()
-        logging.info("Processing started")
+    def SetCriticalVolume(self, node):
+        self._critVol = node
 
-        # Pull volume from Slicer
-        sitkInput = sitkUtils.PullVolumeFromSlicer(inputVolume)
+    def SetLengthThreshold(self, t):
+        self._lengthThresh = t
 
-        # SimpleITK filter
-        sitkOutput = sitk.Threshold(sitkinput.imageLowerThreshold, imageUpperThreshold, 0.0)
-        sitkUtils.PushVolumeToSlicer(sitkOutput, targetNode=outputVolume)
+    def SetOutputFiducials(self, node):
+        self._outputFid = node
 
-        # Compute the thresholded output volume using the "Threshold Scalar Volume" CLI module
-        cliParams = {
-            "InputVolume": inputVolume.GetID(),
-            "OutputVolume": outputVolume.GetID(),
-            "ThresholdValue": imageThreshold,
-            "ThresholdType": "Above" if invert else "Below",
-        }
-        cliNode = slicer.cli.run(slicer.modules.thresholdscalarvolume, None, cliParams, wait_for_completion=True, update_display=showResult)
-        # We don't need the CLI module node anymore, remove it to not clutter the scene with it
-        slicer.mrmlScene.RemoveNode(cliNode)
+    def isValidInputOutputData(self) -> bool:
+        """Ensure all required nodes are present and distinct."""
+        if not all([
+            self._entryFid, self._targetFid,
+            self._targetVol, self._critVol,
+            self._outputFid
+        ]):
+            logging.debug("Invalid I/O: some nodes are missing")
+            return False
+        if self._outputFid.GetID() in (
+            self._entryFid.GetID(), self._targetFid.GetID()
+        ):
+            logging.debug("Invalid I/O: output fiducial collides with input")
+            return False
+        return True
 
-        stopTime = time.time()
-        logging.info(f"Processing completed in {stopTime-startTime:.2f} seconds")
+    def Run(self) -> bool:
+        """Enumerate entry–target pairs, apply constraints, pick best by clearance."""
+        if not self.isValidInputOutputData():
+            return False
+        if not (
+            self._targetVol.GetImageData()
+            and self._critVol.GetImageData()
+        ):
+            logging.error("Volume image data missing")
+            return False
+
+        # Compute Danielsson distance map
+        self._distanceVol = ComputeDistanceImageFromLabelMap().Execute(self._critVol)
+
+        candidates: List[Tuple[float, Tuple[float,float,float], Tuple[float,float,float]]] = []
+        for e, t in self._allPairs():
+            if not self._inTarget(t):
+                continue
+            if not self._collisionCheck(e, t):
+                continue
+            dist = self._minDistance(e, t)
+            if dist <= 0 or self._euclidean(e, t) > self._lengthThresh:
+                continue
+            candidates.append((dist, e, t))
+
+        if not candidates:
+            logging.warning("No valid trajectories found")
+            return False
+
+        # Choose maximum-clearance path
+        _, bestE, bestT = max(candidates, key=lambda x: x[0])
+        self._outputFid.RemoveAllControlPoints()
+        self._outputFid.AddControlPoint(*bestE)
+        self._outputFid.AddControlPoint(*bestT)
+        logging.info("Selected best trajectory")
+        return True
+
+    def _allPairs(self) -> List[Tuple[Tuple[float,float,float], Tuple[float,float,float]]]:
+        pts = []
+        for i in range(self._entryFid.GetNumberOfControlPoints()):
+            e = [0.0, 0.0, 0.0]
+            self._entryFid.GetNthControlPointPosition(i, e)
+            for j in range(self._targetFid.GetNumberOfControlPoints()):
+                t = [0.0, 0.0, 0.0]
+                self._targetFid.GetNthControlPointPosition(j, t)
+                pts.append((tuple(e), tuple(t)))
+        return pts
+
+    def _euclidean(self, p1, p2) -> float:
+        return vtk.vtkMath.Distance2BetweenPoints(p1, p2) ** 0.5
+
+    def _inTarget(self, pt) -> bool:
+        tmpIn = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode")
+        tmpOut = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode")
+        tmpIn.AddControlPoint(pt)
+        PickPointsMatrix().run(self._targetVol, tmpIn, tmpOut)
+        inside = tmpOut.GetNumberOfControlPoints() > 0
+        slicer.mrmlScene.RemoveNode(tmpIn)
+        slicer.mrmlScene.RemoveNode(tmpOut)
+        return inside
+
+    def _collisionCheck(self, p1, p2) -> bool:
+        mc = vtk.vtkDiscreteMarchingCubes()
+        mc.SetInputData(self._critVol.GetImageData())
+        mc.SetValue(0, 1)
+        mc.Update()
+        tree = vtk.vtkOBBTree()
+        tree.SetDataSet(mc.GetOutput())
+        tree.BuildLocator()
+        pts = vtk.vtkPoints()
+        ids = vtk.vtkIdList()
+        hit = tree.IntersectWithLine(p1, p2, pts, ids) != 0
+        return not hit
+
+    def _minDistance(self, p1, p2, samples: int = 50) -> float:
+        sitkImg = sitkUtils.PullVolumeFromSlicer(self._distanceVol)
+        arr = sitk.GetArrayFromImage(sitkImg)
+        tfm = vtk.vtkMatrix4x4()
+        inv = vtk.vtkMatrix4x4()
+        self._distanceVol.GetIJKToRASMatrix(tfm)
+        vtk.vtkMatrix4x4.Invert(tfm, inv)
+        minDist = float("inf")
+        for k in range(samples + 1):
+            alpha = k / samples
+            ras = [p1[i] + alpha * (p2[i] - p1[i]) for i in range(3)] + [1.0]
+            ijk = inv.MultiplyPoint(ras)
+            i, j, k_ = map(int, map(round, ijk[:3]))
+            if not (
+                0 <= k_ < arr.shape[0]
+                and 0 <= j < arr.shape[1]
+                and 0 <= i < arr.shape[2]
+            ):
+                return -1.0
+            minDist = min(minDist, float(arr[k_, j, i]))
+        return minDist
 
 
 #
-# PathPlanningTest
+# Helpers
 #
 
+class ComputeDistanceImageFromLabelMap:
+    """Compute Danielsson distance map from a binary mask volume."""
+    def Execute(self, vol: vtkMRMLScalarVolumeNode) -> vtkMRMLScalarVolumeNode:
+        sitkImg = sitkUtils.PullVolumeFromSlicer(vol)
+        dmap = sitk.DanielssonDistanceMapImageFilter()
+        outSitk = dmap.Execute(sitkImg)
+        return sitkUtils.PushVolumeToSlicer(
+            outSitk, None, vol.GetName() + "_dist"
+        )
 
-class PathPlanningTest(ScriptedLoadableModuleTest):
-    """
-    This is the test case for your scripted module.
-    Uses ScriptedLoadableModuleTest base class, available at:
-    https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
-    """
 
+class PickPointsMatrix:
+    """Mask-based point inclusion via numpy sampling."""
+    def run(self, vol, inF, outF):
+        outF.RemoveAllControlPoints()
+        img = vol.GetImageData()
+        dims = img.GetDimensions()
+        scalars = img.GetPointData().GetScalars()
+        arr = vtk.util.numpy_support.vtk_to_numpy(scalars).reshape(
+            dims[2], dims[1], dims[0]
+        )
+        mat = vtk.vtkMatrix4x4()
+        vol.GetRASToIJKMatrix(mat)
+        for idx in range(inF.GetNumberOfControlPoints()):
+            ras = [0.0, 0.0, 0.0]
+            inF.GetNthControlPointPosition(idx, ras)
+            ijk = mat.MultiplyPoint(ras + [1.0])
+            x, y, z = map(int, map(round, ijk[:3]))
+            if (
+                0 <= x < dims[0]
+                and 0 <= y < dims[1]
+                and 0 <= z < dims[2]
+                and arr[z, y, x] == 1
+            ):
+                outF.AddControlPoint(*ras)
+
+
+#
+# Testing
+#
+
+class PathPlanning_copyTest(ScriptedLoadableModuleTest):
+    """Integration tests for PathPlanning_copy."""
     def setUp(self):
-        """Do whatever is needed to reset the state - typically a scene clear will be enough."""
-        slicer.mrmlScene.Clear()
+        slicer.mrmlScene.Clear(0)
 
     def runTest(self):
-        """Run as few or as many tests as needed here."""
         self.setUp()
-        self.test_PathPlanning1()
+        self.test_distance_map()
+        self.setUp()
+        self.test_pickpoints()
+        self.setUp()
+        self.test_full_smoke()
 
-    def test_PathPlanning1(self):
-        """Ideally you should have several levels of tests.  At the lowest level
-        tests should exercise the functionality of the logic with different inputs
-        (both valid and invalid).  At higher levels your tests should emulate the
-        way the user would interact with your code and confirm that it still works
-        the way you intended.
-        One of the most important features of the tests is that it should alert other
-        developers when their changes will have an impact on the behavior of your
-        module.  For example, if a developer removes a feature that you depend on,
-        your test should break so they know that the feature is needed.
-        """
+    def test_distance_map(self):
+        self.delayDisplay("Testing Danielsson distance map")
+        import numpy as np
+        arr = np.zeros((3, 3, 3), np.uint8)
+        arr[1, 1, 1] = 1
+        node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
+        vtk_img = vtk.vtkImageData()
+        vtk_img.SetDimensions(3, 3, 3)
+        vtk_img.AllocateScalars(vtk.VTK_UNSIGNED_CHAR, 1)
+        vtk_arr = vtk.util.numpy_support.numpy_to_vtk(
+            arr.flatten(), True, vtk.VTK_UNSIGNED_CHAR
+        )
+        vtk_img.GetPointData().SetScalars(vtk_arr)
+        node.SetAndObserveImageData(vtk_img)
+        dm = ComputeDistanceImageFromLabelMap().Execute(node)
+        out = sitk.GetArrayFromImage(sitkUtils.PullVolumeFromSlicer(dm))
+        self.assertEqual(int(out[1, 1, 1]), 0)
+        self.assertEqual(int(out[1, 1, 0]), 1)
 
-        self.delayDisplay("Starting the test")
+    def test_pickpoints(self):
+        self.delayDisplay("Testing PickPointsMatrix")
+        import numpy as np
+        arr = np.zeros((3, 3, 3), np.uint8)
+        arr[1, 1, 1] = 1
+        node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
+        vtk_img = vtk.vtkImageData()
+        vtk_img.SetDimensions(3, 3, 3)
+        vtk_img.AllocateScalars(vtk.VTK_UNSIGNED_CHAR, 1)
+        vtk_arr = vtk.util.numpy_support.numpy_to_vtk(
+            arr.flatten(), True, vtk.VTK_UNSIGNED_CHAR
+        )
+        vtk_img.GetPointData().SetScalars(vtk_arr)
+        node.SetAndObserveImageData(vtk_img)
+        fid_in = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode")
+        fid_in.AddControlPoint(1, 1, 1)
+        fid_in.AddControlPoint(0, 0, 0)
+        fid_out = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode")
+        PickPointsMatrix().run(node, fid_in, fid_out)
+        self.assertEqual(fid_out.GetNumberOfControlPoints(), 1)
 
-        # Get/create input data
-
-        import SampleData
-
-        registerSampleData()
-        inputVolume = SampleData.downloadSample("PathPlanning1")
-        self.delayDisplay("Loaded test data set")
-
-        inputScalarRange = inputVolume.GetImageData().GetScalarRange()
-        self.assertEqual(inputScalarRange[0], 0)
-        self.assertEqual(inputScalarRange[1], 695)
-
-        outputVolume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
-        threshold = 100
-
-        # Test the module logic
-
-        logic = PathPlanningLogic()
-
-        # Test algorithm with non-inverted threshold
-        logic.process(inputVolume, outputVolume, threshold, True)
-        outputScalarRange = outputVolume.GetImageData().GetScalarRange()
-        self.assertEqual(outputScalarRange[0], inputScalarRange[0])
-        self.assertEqual(outputScalarRange[1], threshold)
-
-        # Test algorithm with inverted threshold
-        logic.process(inputVolume, outputVolume, threshold, False)
-        outputScalarRange = outputVolume.GetImageData().GetScalarRange()
-        self.assertEqual(outputScalarRange[0], inputScalarRange[0])
-        self.assertEqual(outputScalarRange[1], inputScalarRange[1])
-
-        self.delayDisplay("Test passed")
+    def test_full_smoke(self):
+        self.delayDisplay("Testing Run() smoke")
+        logic = PathPlanning_copyLogic()
+        e = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode")
+        e.AddControlPoint(0, 0, 0)
+        t = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode")
+        t.AddControlPoint(4, 4, 4)
+        vol = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
+        out = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode")
+        logic.SetEntryFiducials(e)
+        logic.SetTargetFiducials(t)
+        logic.SetTargetVolume(vol)
+        logic.SetCriticalVolume(vol)
+        logic.SetLengthThreshold(100.0)
+        logic.SetOutputFiducials(out)
+        self.assertFalse(logic.Run())
